@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         MoneyTab YouTube Link Extractor
 // @namespace    http://tampermonkey.net/
-// @version      1.0
-// @description  從 MoneyTab 的 /youtube-embed?k=... iframe 抽出真正 YouTube watch 連結
+// @version      1.1
+// @description  從 MoneyTab 的 /youtube-embed?k=... iframe 抽出真正 YouTube watch 連結 (支援 SPA 跳頁更新)
 // @match        https://www.money-tab.com/channel/3pm-premium
 // @match        https://www.money-tab.com/channel/3pm-premium/*
 // @grant        none
@@ -13,6 +13,7 @@
     'use strict';
 
     const PANEL_ID = 'tm-youtube-link-extractor-panel';
+    let lastProcessedId = null; // 紀錄上次處理嘅 Video ID
 
     function safeBase64Decode(input) {
         try {
@@ -29,11 +30,9 @@
             const k = url.searchParams.get('k');
             if (!k) return null;
 
-            // URLSearchParams 已經會自動 decode %3D 呢類 encoding
             const decoded = safeBase64Decode(k);
             if (!decoded) return null;
 
-            // YouTube video id 一般 11 chars，但先寬鬆少少
             if (!/^[A-Za-z0-9_-]{6,}$/.test(decoded)) {
                 console.warn('[YT Extractor] Decoded value looks suspicious:', decoded);
             }
@@ -112,7 +111,10 @@
         closeBtn.textContent = '關閉';
         closeBtn.style.padding = '6px 10px';
         closeBtn.style.cursor = 'pointer';
-        closeBtn.addEventListener('click', () => panel.remove());
+        closeBtn.addEventListener('click', () => {
+            panel.remove();
+            // 點擊關閉後，除非 ID 變咗，如果唔係唔再彈出
+        });
 
         panel.appendChild(title);
         panel.appendChild(link);
@@ -124,7 +126,11 @@
 
     function extractFromPage() {
         const iframe = document.querySelector('iframe[src*="/youtube-embed?"]');
-        if (!iframe) return false;
+        if (!iframe) {
+            // 如果頁面無 iframe，可以選擇唔理或者清走舊 panel
+            // lastProcessedId = null;
+            return false;
+        }
 
         const src = iframe.getAttribute('src');
         if (!src) return false;
@@ -132,34 +138,35 @@
         const videoId = decodeVideoIdFromIframeSrc(src);
         if (!videoId) return false;
 
+        // 如果 ID 冇變，就唔重複處理
+        if (videoId === lastProcessedId) return true;
+
+        lastProcessedId = videoId;
         const watchUrl = buildWatchUrl(videoId);
 
-        console.log('[YT Extractor] iframe src =', src);
-        console.log('[YT Extractor] videoId =', videoId);
-        console.log('[YT Extractor] watchUrl =', watchUrl);
-
+        console.log('[YT Extractor] New video detected:', videoId);
         renderPanel(watchUrl, src);
         return true;
     }
 
     function init() {
-        // 先即時試一次
-        if (extractFromPage()) return;
+        // 1. 初次啟動
+        extractFromPage();
 
-        // 再監察動態載入
+        // 2. 利用 MutationObserver 監控 DOM 變化 (處理 SPA 跳頁)
         const observer = new MutationObserver(() => {
-            if (extractFromPage()) {
-                observer.disconnect();
-            }
+            extractFromPage();
         });
 
-        observer.observe(document.documentElement, {
+        observer.observe(document.body, {
             childList: true,
             subtree: true,
+            attributes: true, // 有時 iframe 係原地換 src
+            attributeFilter: ['src']
         });
 
-        // 保險：10秒後停止
-        setTimeout(() => observer.disconnect(), 10000);
+        // 3. 保險：setInterval 檢查 (防止有啲 route change 唔郁 DOM)
+        setInterval(extractFromPage, 2000);
     }
 
     init();
