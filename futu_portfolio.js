@@ -22,6 +22,7 @@ GM_addStyle(`
     const LS_SHARES_PREFIX = 'futunn_shares_';
     const LS_COST_PREFIX = 'futunn_cost_';
     const LS_LAST_RATIOS = 'futunn_last_ratios_';
+    const LS_REFRESH_INTERVAL = 'futunn_refresh_interval_';
 
     let isManualOverride = false;
 
@@ -30,9 +31,62 @@ GM_addStyle(`
     const WIDTH_AMOUNT = 145;
 
     let isUpdating = false, debounceTimer = null, observer = null;
+    let hasAlerted = false; // 防止重複 alert
+    let refreshTimer = null;
 
     const pid = () => (location.pathname.match(/portfolio\/(\d+)/) || [])[1] || 'default';
     const key = () => LS_KEY_PREFIX + pid();
+
+    const getRefreshInterval = () => { const v = parseInt(localStorage.getItem(LS_REFRESH_INTERVAL + pid())); return isNaN(v) ? 15 : v; };
+    const setRefreshInterval = (v) => { localStorage.setItem(LS_REFRESH_INTERVAL + pid(), String(v)); applyRefreshTimer(); };
+    const applyRefreshTimer = () => {
+        if (refreshTimer) clearTimeout(refreshTimer);
+        const mins = getRefreshInterval();
+        if (mins > 0) {
+            refreshTimer = setTimeout(() => location.reload(), mins * 60 * 1000);
+        }
+    };
+    applyRefreshTimer();
+
+    function initRefreshControl() {
+        if (document.getElementById('ft-refresh-control')) return;
+        const wrap = document.createElement('div');
+        wrap.id = 'ft-refresh-control';
+        wrap.style.cssText = 'position: fixed; top: 15px; right: 15px; z-index: 9998; background: rgba(0,0,0,0.6); color: #fff; padding: 6px 10px; border-radius: 12px; font-size: 12px; display: flex; align-items: center; gap: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.2);';
+        
+        const label = document.createElement('span');
+        label.textContent = '自動刷新:';
+        wrap.appendChild(label);
+        
+        const options = [{ v: 1, t: '1m' }, { v: 5, t: '5m' }, { v: 15, t: '15m' }, { v: 0, t: '關閉' }];
+        const currentMins = getRefreshInterval();
+        
+        options.forEach(opt => {
+            const optLabel = document.createElement('label');
+            optLabel.style.cssText = 'display: flex; align-items: center; gap: 3px; cursor: pointer; margin: 0; user-select: none;';
+            
+            const radio = document.createElement('input');
+            radio.type = 'radio';
+            radio.name = 'ft-refresh-radio';
+            radio.value = opt.v;
+            radio.style.margin = '0';
+            radio.style.cursor = 'pointer';
+            if (opt.v === currentMins) radio.checked = true;
+            
+            radio.onchange = (e) => {
+                if (e.target.checked) setRefreshInterval(parseInt(e.target.value));
+            };
+            
+            const text = document.createElement('span');
+            text.textContent = opt.t;
+            
+            optLabel.appendChild(radio);
+            optLabel.appendChild(text);
+            wrap.appendChild(optLabel);
+        });
+        
+        document.body.appendChild(wrap);
+    }
     const fmtAmount = (n) => `$${Number(n).toLocaleString('en-HK', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
     const parsePercent = (t) => { const m = String(t || '').replace(',', '').match(/-?\d+(\.\d+)?/); return m ? parseFloat(m[0]) : 0; }
     const getTotal = () => { const v = parseFloat(localStorage.getItem(key())); if (isFinite(v) && v > 0) return v; return DEFAULT_TOTAL_MAP[pid()] || FALLBACK_TOTAL; }
@@ -66,35 +120,108 @@ GM_addStyle(`
         localStorage.setItem(LS_LAST_RATIOS + pid(), JSON.stringify(ratios));
     };
 
-    function showFloatingModal() {
-        if (document.getElementById('ft-floating-modal')) return;
-        const modal = document.createElement('div');
+    const recalcTotalAndRender = () => {
+        let tempTotal = 0;
+        document.querySelectorAll('.position .stocks .stock-item').forEach(r => {
+            const cEl = r.querySelector('.code');
+            if (!cEl) return;
+            const p = getPrice(r);
+            const s = getActualShares(cEl.textContent.trim());
+            if (p > 0 && s > 0) tempTotal += p * s;
+        });
+        if (tempTotal > 0) {
+            setTotal(tempTotal);
+            isManualOverride = false;
+        }
+        safeRender();
+    };
+
+    function showFloatingModal(deletedStocks = [], newStocks = [], changedStocks = []) {
+        let modal = document.getElementById('ft-floating-modal');
+        if (modal) modal.remove();
+
+        modal = document.createElement('div');
         modal.id = 'ft-floating-modal';
         modal.style.cssText = `
             position: fixed; top: 60px; left: 50%; transform: translateX(-50%);
-            background: rgba(244, 67, 54, 0.95); color: #fff; padding: 10px 16px;
+            background: rgba(244, 67, 54, 0.95); color: #fff; padding: 12px 20px;
             border-radius: 8px; z-index: 99999; font-size: 14px; display: flex;
-            align-items: center; gap: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.2);
-            white-space: nowrap;
+            flex-direction: column; gap: 10px; box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+            min-width: 280px;
         `;
-        const text = document.createElement('span');
-        text.textContent = '倉位比例或股票有變動，請更新持股！';
+
+        const title = document.createElement('div');
+        title.style.fontWeight = 'bold';
+        title.style.fontSize = '16px';
+        title.textContent = '⚠️ 倉位變動提醒';
+        modal.appendChild(title);
+
+        const content = document.createElement('div');
+        content.style.fontSize = '13px';
+        content.style.lineHeight = '1.6';
+
+        let detailsHTML = '';
+        if (deletedStocks.length > 0) {
+            detailsHTML += `<div><b style="color:#ffcdd2;">已刪除：</b> ${deletedStocks.join(', ')}</div>`;
+        }
+        if (newStocks.length > 0) {
+            detailsHTML += `<div><b style="color:#c8e6c9;">新加入：</b> ${newStocks.join(', ')}</div>`;
+        }
+        if (changedStocks.length > 0) {
+            detailsHTML += `<div><b style="color:#fff9c4;">比例變動 (>5%)：</b><br>${changedStocks.join('<br>')}</div>`;
+        }
+        
+        if (!detailsHTML) {
+            detailsHTML = '<div>請檢查並更新最新持股量！</div>';
+        }
+        
+        content.innerHTML = detailsHTML;
+        modal.appendChild(content);
+
+        const btnWrap = document.createElement('div');
+        btnWrap.style.textAlign = 'right';
+        btnWrap.style.marginTop = '4px';
 
         const btn = document.createElement('button');
         btn.textContent = '我已更新';
-        btn.style.cssText = 'background: #fff; color: #f44336; border: none; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-weight: bold;';
+        btn.style.cssText = 'background: #fff; color: #f44336; border: none; padding: 6px 16px; border-radius: 4px; cursor: pointer; font-weight: bold;';
         btn.onclick = () => {
             saveLastRatios();
             modal.remove();
+            hasAlerted = false;
             safeRender();
         };
-        modal.appendChild(text); modal.appendChild(btn);
+        
+        btnWrap.appendChild(btn);
+        modal.appendChild(btnWrap);
         document.body.appendChild(modal);
     }
 
     function hideFloatingModal() {
         const modal = document.getElementById('ft-floating-modal');
         if (modal) modal.remove();
+    }
+
+    function notifyChange() {
+        if (window.Notification && Notification.permission === "default") {
+            Notification.requestPermission().catch(() => { });
+        }
+        if (window.Notification && Notification.permission === "granted") {
+            new Notification('富途投資組合', { body: '倉位比例或股票有變動，請檢查並更新持股！' });
+        }
+
+        try {
+            const ctx = new (window.AudioContext || window.webkitAudioContext)();
+            const osc = ctx.createOscillator();
+            const gain = ctx.createGain();
+            osc.connect(gain);
+            gain.connect(ctx.destination);
+            osc.type = 'sine';
+            osc.frequency.value = 880;
+            gain.gain.setValueAtTime(0.5, ctx.currentTime);
+            osc.start();
+            osc.stop(ctx.currentTime + 0.3);
+        } catch (e) { }
     }
 
     // 注入一段 CSS，統一控制欄位收縮 & 寬度，避免推出畫面
@@ -237,25 +364,36 @@ GM_addStyle(`
                 shareSpan.style.cursor = 'pointer';
                 shareSpan.onclick = (e) => {
                     e.stopPropagation();
-                    const input = prompt(`輸入 ${code} 的實際持股：`, String(getActualShares(code)));
-                    if (input !== null) {
-                        const v = parseInt(input.replace(/[, ]/g, ''));
+                    if (shareSpan.querySelector('input')) return;
+                    
+                    const currentVal = getActualShares(code);
+                    const input = document.createElement('input');
+                    input.type = 'number';
+                    input.value = currentVal === 0 ? '' : currentVal;
+                    input.placeholder = '股數';
+                    input.style.cssText = 'width: 45px; font-size: 10px; padding: 0 2px; margin: 0; text-align: center; border: 1px solid #ff9800; border-radius: 3px; background: #fff; color: #333; outline: none;';
+                    
+                    const saveValue = () => {
+                        const valStr = input.value;
+                        const v = parseInt(valStr.replace(/[, ]/g, ''));
                         setActualShares(code, isNaN(v) ? 0 : v);
-
-                        let tempTotal = 0;
-                        document.querySelectorAll('.position .stocks .stock-item').forEach(r => {
-                            const cEl = r.querySelector('.code');
-                            if (!cEl) return;
-                            const p = getPrice(r);
-                            const s = getActualShares(cEl.textContent.trim());
-                            if (p > 0 && s > 0) tempTotal += p * s;
-                        });
-                        if (tempTotal > 0) {
-                            setTotal(tempTotal);
-                            isManualOverride = false;
+                        recalcTotalAndRender();
+                    };
+                    
+                    input.onblur = saveValue;
+                    input.onkeydown = (ev) => {
+                        if (ev.key === 'Enter') {
+                            input.blur();
+                        } else if (ev.key === 'Escape') {
+                            input.onblur = null;
+                            safeRender();
                         }
-                        safeRender();
-                    }
+                    };
+                    
+                    shareSpan.innerHTML = '持股: ';
+                    shareSpan.appendChild(input);
+                    input.focus();
+                    input.select();
                 };
 
                 const sepSpan = document.createElement('span');
@@ -266,30 +404,43 @@ GM_addStyle(`
                 costSpan.style.cursor = 'pointer';
                 costSpan.onclick = (e) => {
                     e.stopPropagation();
-                    const defaultCost = getActualCost(code) !== null ? getActualCost(code) : +(getPrice(row).toFixed(4));
-                    const input = prompt(`輸入 ${code} 的平均成本：\n（留空以清除）`, String(defaultCost));
-                    if (input !== null) {
-                        if (input.trim() === '') {
+                    if (costSpan.querySelector('input')) return;
+                    
+                    const currentCost = getActualCost(code);
+                    const defaultCost = currentCost !== null ? currentCost : +(getPrice(row).toFixed(4));
+                    
+                    const input = document.createElement('input');
+                    input.type = 'number';
+                    input.step = '0.0001';
+                    input.value = currentCost !== null ? currentCost : defaultCost;
+                    input.placeholder = '成本';
+                    input.style.cssText = 'width: 55px; font-size: 10px; padding: 0 2px; margin: 0; text-align: center; border: 1px solid #ff9800; border-radius: 3px; background: #fff; color: #333; outline: none;';
+                    
+                    const saveValue = () => {
+                        const valStr = input.value;
+                        if (valStr.trim() === '') {
                             setActualCost(code, null);
                         } else {
-                            const v = parseFloat(input.replace(/[, ]/g, ''));
+                            const v = parseFloat(valStr.replace(/[, ]/g, ''));
                             setActualCost(code, isNaN(v) ? null : v);
                         }
-
-                        let tempTotal = 0;
-                        document.querySelectorAll('.position .stocks .stock-item').forEach(r => {
-                            const cEl = r.querySelector('.code');
-                            if (!cEl) return;
-                            const p = getPrice(r);
-                            const s = getActualShares(cEl.textContent.trim());
-                            if (p > 0 && s > 0) tempTotal += p * s;
-                        });
-                        if (tempTotal > 0) {
-                            setTotal(tempTotal);
-                            isManualOverride = false;
+                        recalcTotalAndRender();
+                    };
+                    
+                    input.onblur = saveValue;
+                    input.onkeydown = (ev) => {
+                        if (ev.key === 'Enter') {
+                            input.blur();
+                        } else if (ev.key === 'Escape') {
+                            input.onblur = null;
+                            safeRender();
                         }
-                        safeRender();
-                    }
+                    };
+                    
+                    costSpan.innerHTML = '成本: ';
+                    costSpan.appendChild(input);
+                    input.focus();
+                    input.select();
                 };
 
                 subEl.appendChild(shareSpan);
@@ -306,8 +457,8 @@ GM_addStyle(`
             const costText = actualCost !== null ? `成本: ${actualCost}` : '設成本';
 
             if (mainEl.textContent !== mainText) mainEl.textContent = mainText;
-            if (shareSpan.textContent !== shareText) shareSpan.textContent = shareText;
-            if (costSpan.textContent !== costText) costSpan.textContent = costText;
+            if (!shareSpan.querySelector('input') && shareSpan.textContent !== shareText) shareSpan.textContent = shareText;
+            if (!costSpan.querySelector('input') && costSpan.textContent !== costText) costSpan.textContent = costText;
         });
     }
 
@@ -393,6 +544,7 @@ GM_addStyle(`
 
     function tryRender() {
         injectStyle();
+        initRefreshControl();
         const ready = document.querySelector('.position .stocks .stock-item .with4.position-ratio');
         if (!ready) return;
         isUpdating = true;
@@ -429,18 +581,27 @@ GM_addStyle(`
         }
 
         let hasChange = false;
+        let deletedStocks = [];
+        let newStocks = [];
+        let changedStocks = [];
+
         if (!lastRatios) {
             hasChange = true;
         } else {
             const lastCodes = Object.keys(lastRatios);
-            if (lastCodes.sort().join(',') !== currentStocks.sort().join(',')) {
-                hasChange = true;
-            } else {
-                for (let code of currentStocks) {
-                    if (Math.abs(currentRatios[code] - (lastRatios[code] || 0)) > 5) {
-                        hasChange = true;
-                        break;
-                    }
+            for (let code of lastCodes) {
+                if (!currentStocks.includes(code)) {
+                    deletedStocks.push(code);
+                    hasChange = true;
+                }
+            }
+            for (let code of currentStocks) {
+                if (!lastCodes.includes(code)) {
+                    newStocks.push(code);
+                    hasChange = true;
+                } else if (Math.abs(currentRatios[code] - (lastRatios[code] || 0)) > 5) {
+                    changedStocks.push(`${code} (${(lastRatios[code] || 0)}% → ${currentRatios[code]}%)`);
+                    hasChange = true;
                 }
             }
         }
@@ -448,7 +609,11 @@ GM_addStyle(`
         let finalTotal = oldTotal;
 
         if (hasChange) {
-            showFloatingModal();
+            showFloatingModal(deletedStocks, newStocks, changedStocks);
+            if (!hasAlerted) {
+                hasAlerted = true;
+                notifyChange();
+            }
         } else {
             hideFloatingModal();
             if (!isManualOverride && hasShares && newTotal > 0) {
