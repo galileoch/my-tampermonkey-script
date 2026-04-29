@@ -150,6 +150,34 @@
       .vplayer-recommend {
         display: none !important;
       }
+
+      /* 帶返 bottomCtrl 出嚟 */
+      #bottomCtrl {
+        position: fixed !important;
+        z-index: 999999 !important;
+        bottom: 45px !important; /* 避開 DPlayer 控制列 */
+        left: 0 !important;
+        right: 0 !important;
+        display: block !important; /* 覆蓋原本可能嘅 display: none */
+        visibility: visible !important;
+        opacity: 1;
+        transition: opacity 0.3s ease !important;
+        pointer-events: auto !important;
+      }
+
+      /* 滑鼠閒置時隱藏 */
+      #bottomCtrl.tm-hide {
+        opacity: 0 !important;
+        pointer-events: none !important;
+      }
+      
+      /* 確保 bottomCtrl 嘅彈出選單（例如高清度）唔會被遮擋或向下彈出畫面外 */
+      #bottomCtrl .select-opt,
+      #bottomCtrl .emoji-panel,
+      #bottomCtrl .gift-block {
+        bottom: 100% !important;
+        top: auto !important;
+      }
     `;
 
         const style = document.createElement('style');
@@ -199,14 +227,21 @@
     // 滑鼠郁動時強制叫返 control bar 出嚟
     document.addEventListener('mousemove', () => {
         const player = document.querySelector('#dplayer');
-        if (!player) return;
+        const bottomCtrl = document.querySelector('#bottomCtrl');
 
-        player.classList.remove('dplayer-hide-controller');
-        player.classList.add('dplayer-show-controller');
+        if (player) {
+            player.classList.remove('dplayer-hide-controller');
+            player.classList.add('dplayer-show-controller');
+        }
+
+        if (bottomCtrl) {
+            bottomCtrl.classList.remove('tm-hide');
+        }
 
         clearTimeout(window.__tmDplayerControlTimer);
         window.__tmDplayerControlTimer = setTimeout(() => {
-            player.classList.remove('dplayer-show-controller');
+            if (player) player.classList.remove('dplayer-show-controller');
+            if (bottomCtrl) bottomCtrl.classList.add('tm-hide');
         }, 2500);
     });
 
