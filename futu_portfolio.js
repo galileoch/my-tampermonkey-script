@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Futunn Portfolio Amount Column ($) + Safe Width
 // @namespace    hk.tools.futunn.amountcol
-// @version      1.3.3
+// @version      1.4.0
 // @match        https://portfolio.futunn.com/portfolio/*
 // @grant        GM_addStyle
 // ==/UserScript==
@@ -50,42 +50,94 @@ GM_addStyle(`
 
     function initRefreshControl() {
         if (document.getElementById('ft-refresh-control')) return;
+
         const wrap = document.createElement('div');
         wrap.id = 'ft-refresh-control';
-        wrap.style.cssText = 'position: fixed; top: 15px; right: 15px; z-index: 9998; background: rgba(0,0,0,0.6); color: #fff; padding: 6px 10px; border-radius: 12px; font-size: 12px; display: flex; align-items: center; gap: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.2);';
-        
-        const label = document.createElement('span');
-        label.textContent = '自動刷新:';
-        wrap.appendChild(label);
-        
+        wrap.style.cssText = [
+            'position:fixed', 'top:15px', 'right:15px', 'z-index:9998',
+            'background:rgba(18,18,28,0.88)', 'backdrop-filter:blur(8px)',
+            'color:#fff', 'border-radius:12px', 'font-size:12px',
+            'box-shadow:0 4px 20px rgba(0,0,0,0.5)',
+            'border:1px solid rgba(255,255,255,0.12)',
+            'min-width:230px', 'min-height:56px', 'max-width:420px', 'max-height:70vh',
+            'resize:both', 'overflow:auto',
+            'display:flex', 'flex-direction:column',
+        ].join(';');
+
+        // ── Header (drag handle) ──
+        const header = document.createElement('div');
+        header.id = 'ft-panel-header';
+        header.style.cssText = [
+            'cursor:move', 'padding:7px 10px',
+            'background:rgba(255,255,255,0.07)',
+            'border-radius:12px 12px 0 0',
+            'display:flex', 'align-items:center', 'justify-content:space-between',
+            'user-select:none',
+            'border-bottom:1px solid rgba(255,255,255,0.1)',
+            'flex-shrink:0',
+        ].join(';');
+        header.innerHTML = '<span style="font-weight:bold;font-size:11px;opacity:0.75;">📊 富途組合助手</span>';
+
+        // ── Refresh controls row ──
+        const refreshRow = document.createElement('div');
+        refreshRow.style.cssText = 'padding:6px 10px;display:flex;align-items:center;gap:8px;border-bottom:1px solid rgba(255,255,255,0.08);flex-shrink:0;';
+
+        const rLabel = document.createElement('span');
+        rLabel.textContent = '自動刷新:';
+        rLabel.style.opacity = '0.65';
+        refreshRow.appendChild(rLabel);
+
         const options = [{ v: 1, t: '1m' }, { v: 5, t: '5m' }, { v: 15, t: '15m' }, { v: 0, t: '關閉' }];
         const currentMins = getRefreshInterval();
-        
         options.forEach(opt => {
             const optLabel = document.createElement('label');
-            optLabel.style.cssText = 'display: flex; align-items: center; gap: 3px; cursor: pointer; margin: 0; user-select: none;';
-            
+            optLabel.style.cssText = 'display:flex;align-items:center;gap:3px;cursor:pointer;margin:0;user-select:none;';
             const radio = document.createElement('input');
             radio.type = 'radio';
             radio.name = 'ft-refresh-radio';
+            radio.id = 'ft-radio-' + opt.v;
             radio.value = opt.v;
-            radio.style.margin = '0';
-            radio.style.cursor = 'pointer';
+            radio.style.cssText = 'margin:0;cursor:pointer;';
             if (opt.v === currentMins) radio.checked = true;
-            
-            radio.onchange = (e) => {
-                if (e.target.checked) setRefreshInterval(parseInt(e.target.value));
-            };
-            
+            radio.onchange = e => { if (e.target.checked) setRefreshInterval(parseInt(e.target.value)); };
             const text = document.createElement('span');
             text.textContent = opt.t;
-            
             optLabel.appendChild(radio);
             optLabel.appendChild(text);
-            wrap.appendChild(optLabel);
+            refreshRow.appendChild(optLabel);
         });
-        
+
+        // ── Log section ──
+        const logSection = document.createElement('div');
+        logSection.id = 'ft-panel-log';
+        logSection.style.cssText = 'display:none;padding:8px 10px;flex:1;overflow-y:auto;font-size:12px;line-height:1.7;';
+
+        wrap.appendChild(header);
+        wrap.appendChild(refreshRow);
+        wrap.appendChild(logSection);
         document.body.appendChild(wrap);
+
+        // ── Draggable ──
+        let isDragging = false, dragOffX = 0, dragOffY = 0;
+        header.addEventListener('mousedown', e => {
+            isDragging = true;
+            const rect = wrap.getBoundingClientRect();
+            dragOffX = e.clientX - rect.left;
+            dragOffY = e.clientY - rect.top;
+            document.addEventListener('mousemove', onDragMove);
+            document.addEventListener('mouseup', onDragUp);
+        });
+        function onDragMove(e) {
+            if (!isDragging) return;
+            wrap.style.right = 'auto';
+            wrap.style.left = (e.clientX - dragOffX) + 'px';
+            wrap.style.top = (e.clientY - dragOffY) + 'px';
+        }
+        function onDragUp() {
+            isDragging = false;
+            document.removeEventListener('mousemove', onDragMove);
+            document.removeEventListener('mouseup', onDragUp);
+        }
     }
     const fmtAmount = (n) => `$${Number(n).toLocaleString('en-HK', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
     const parsePercent = (t) => { const m = String(t || '').replace(',', '').match(/-?\d+(\.\d+)?/); return m ? parseFloat(m[0]) : 0; }
@@ -121,85 +173,62 @@ GM_addStyle(`
     };
 
     const recalcTotalAndRender = () => {
-        let tempTotal = 0;
+        let stockTotal = 0, ratioSum = 0;
         document.querySelectorAll('.position .stocks .stock-item').forEach(r => {
             const cEl = r.querySelector('.code');
             if (!cEl) return;
             const p = getPrice(r);
             const s = getActualShares(cEl.textContent.trim());
-            if (p > 0 && s > 0) tempTotal += p * s;
+            if (p > 0 && s > 0) stockTotal += p * s;
+            const ratioEl = r.querySelector('.with4.position-ratio');
+            if (ratioEl) ratioSum += parsePercent(ratioEl.textContent);
         });
-        if (tempTotal > 0) {
-            setTotal(tempTotal);
+        if (stockTotal > 0) {
+            // 若比例總和 < 100，代表有現金持倉，推算全倉總額
+            const adjustedTotal = (ratioSum > 0 && ratioSum < 99.9)
+                ? stockTotal / (ratioSum / 100)
+                : stockTotal;
+            setTotal(adjustedTotal);
             isManualOverride = false;
         }
         safeRender();
     };
 
     function showFloatingModal(deletedStocks = [], newStocks = [], changedStocks = []) {
-        let modal = document.getElementById('ft-floating-modal');
-        if (modal) modal.remove();
-
-        modal = document.createElement('div');
-        modal.id = 'ft-floating-modal';
-        modal.style.cssText = `
-            position: fixed; top: 60px; left: 50%; transform: translateX(-50%);
-            background: rgba(244, 67, 54, 0.95); color: #fff; padding: 12px 20px;
-            border-radius: 8px; z-index: 99999; font-size: 14px; display: flex;
-            flex-direction: column; gap: 10px; box-shadow: 0 4px 12px rgba(0,0,0,0.2);
-            min-width: 280px;
-        `;
-
-        const title = document.createElement('div');
-        title.style.fontWeight = 'bold';
-        title.style.fontSize = '16px';
-        title.textContent = '⚠️ 倉位變動提醒';
-        modal.appendChild(title);
-
-        const content = document.createElement('div');
-        content.style.fontSize = '13px';
-        content.style.lineHeight = '1.6';
-
-        let detailsHTML = '';
-        if (deletedStocks.length > 0) {
-            detailsHTML += `<div><b style="color:#ffcdd2;">已刪除：</b> ${deletedStocks.join(', ')}</div>`;
+        // 有變動 → 停止自動刷新
+        const offRadio = document.getElementById('ft-radio-0');
+        if (offRadio && !offRadio.checked) {
+            offRadio.checked = true;
+            setRefreshInterval(0);
         }
-        if (newStocks.length > 0) {
-            detailsHTML += `<div><b style="color:#c8e6c9;">新加入：</b> ${newStocks.join(', ')}</div>`;
-        }
-        if (changedStocks.length > 0) {
-            detailsHTML += `<div><b style="color:#fff9c4;">比例變動 (>5%)：</b><br>${changedStocks.join('<br>')}</div>`;
-        }
-        
-        if (!detailsHTML) {
-            detailsHTML = '<div>請檢查並更新最新持股量！</div>';
-        }
-        
-        content.innerHTML = detailsHTML;
-        modal.appendChild(content);
 
-        const btnWrap = document.createElement('div');
-        btnWrap.style.textAlign = 'right';
-        btnWrap.style.marginTop = '4px';
+        const logSection = document.getElementById('ft-panel-log');
+        if (!logSection) return;
+        logSection.style.display = 'block';
 
-        const btn = document.createElement('button');
-        btn.textContent = '我已更新';
-        btn.style.cssText = 'background: #fff; color: #f44336; border: none; padding: 6px 16px; border-radius: 4px; cursor: pointer; font-weight: bold;';
-        btn.onclick = () => {
+        let html = '<div style="font-weight:bold;font-size:13px;margin-bottom:6px;color:#ffab40;">⚠️ 倉位變動提醒</div>';
+        if (deletedStocks.length > 0)
+            html += `<div><span style="color:#ef9a9a;">✕ 已刪除：</span>${deletedStocks.join(', ')}</div>`;
+        if (newStocks.length > 0)
+            html += `<div><span style="color:#a5d6a7;">✚ 新加入：</span>${newStocks.join(', ')}</div>`;
+        if (changedStocks.length > 0)
+            html += `<div><span style="color:#fff59d;">≈ 比例變動(&gt;5%)：</span><br>${changedStocks.join('<br>')}</div>`;
+        if (!deletedStocks.length && !newStocks.length && !changedStocks.length)
+            html += '<div>請檢查並更新最新持股量！</div>';
+        html += `<div style="text-align:right;margin-top:8px;"><button id="ft-panel-log-btn" style="background:#ffab40;color:#111;border:none;padding:4px 12px;border-radius:4px;cursor:pointer;font-weight:bold;font-size:11px;">我已更新</button></div>`;
+
+        logSection.innerHTML = html;
+        document.getElementById('ft-panel-log-btn')?.addEventListener('click', () => {
             saveLastRatios();
-            modal.remove();
+            hideFloatingModal();
             hasAlerted = false;
             safeRender();
-        };
-        
-        btnWrap.appendChild(btn);
-        modal.appendChild(btnWrap);
-        document.body.appendChild(modal);
+        });
     }
 
     function hideFloatingModal() {
-        const modal = document.getElementById('ft-floating-modal');
-        if (modal) modal.remove();
+        const logSection = document.getElementById('ft-panel-log');
+        if (logSection) { logSection.style.display = 'none'; logSection.innerHTML = ''; }
     }
 
     function notifyChange() {
@@ -365,21 +394,21 @@ GM_addStyle(`
                 shareSpan.onclick = (e) => {
                     e.stopPropagation();
                     if (shareSpan.querySelector('input')) return;
-                    
+
                     const currentVal = getActualShares(code);
                     const input = document.createElement('input');
                     input.type = 'number';
                     input.value = currentVal === 0 ? '' : currentVal;
                     input.placeholder = '股數';
                     input.style.cssText = 'width: 45px; font-size: 10px; padding: 0 2px; margin: 0; text-align: center; border: 1px solid #ff9800; border-radius: 3px; background: #fff; color: #333; outline: none;';
-                    
+
                     const saveValue = () => {
                         const valStr = input.value;
                         const v = parseInt(valStr.replace(/[, ]/g, ''));
                         setActualShares(code, isNaN(v) ? 0 : v);
                         recalcTotalAndRender();
                     };
-                    
+
                     input.onblur = saveValue;
                     input.onkeydown = (ev) => {
                         if (ev.key === 'Enter') {
@@ -389,7 +418,7 @@ GM_addStyle(`
                             safeRender();
                         }
                     };
-                    
+
                     shareSpan.innerHTML = '持股: ';
                     shareSpan.appendChild(input);
                     input.focus();
@@ -405,17 +434,17 @@ GM_addStyle(`
                 costSpan.onclick = (e) => {
                     e.stopPropagation();
                     if (costSpan.querySelector('input')) return;
-                    
+
                     const currentCost = getActualCost(code);
                     const defaultCost = currentCost !== null ? currentCost : +(getPrice(row).toFixed(4));
-                    
+
                     const input = document.createElement('input');
                     input.type = 'number';
                     input.step = '0.0001';
                     input.value = currentCost !== null ? currentCost : defaultCost;
                     input.placeholder = '成本';
                     input.style.cssText = 'width: 55px; font-size: 10px; padding: 0 2px; margin: 0; text-align: center; border: 1px solid #ff9800; border-radius: 3px; background: #fff; color: #333; outline: none;';
-                    
+
                     const saveValue = () => {
                         const valStr = input.value;
                         if (valStr.trim() === '') {
@@ -426,7 +455,7 @@ GM_addStyle(`
                         }
                         recalcTotalAndRender();
                     };
-                    
+
                     input.onblur = saveValue;
                     input.onkeydown = (ev) => {
                         if (ev.key === 'Enter') {
@@ -436,7 +465,7 @@ GM_addStyle(`
                             safeRender();
                         }
                     };
-                    
+
                     costSpan.innerHTML = '成本: ';
                     costSpan.appendChild(input);
                     input.focus();
@@ -617,7 +646,11 @@ GM_addStyle(`
         } else {
             hideFloatingModal();
             if (!isManualOverride && hasShares && newTotal > 0) {
-                finalTotal = newTotal;
+                // 若比例總和 < 100，代表有現金持倉，推算全倉總額
+                const ratioSum = Object.values(currentRatios).reduce((a, b) => a + b, 0);
+                finalTotal = (ratioSum > 0 && ratioSum < 99.9)
+                    ? newTotal / (ratioSum / 100)
+                    : newTotal;
                 setTotal(finalTotal);
                 saveLastRatios();
             }
