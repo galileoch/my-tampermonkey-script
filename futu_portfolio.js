@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Futunn Portfolio Amount Column ($) + Safe Width
 // @namespace    hk.tools.futunn.amountcol
-// @version      1.4.0
+// @version      1.4.1
 // @match        https://portfolio.futunn.com/portfolio/*
 // @grant        GM_addStyle
 // ==/UserScript==
@@ -25,6 +25,7 @@ GM_addStyle(`
     const LS_REFRESH_INTERVAL = 'futunn_refresh_interval_';
 
     let isManualOverride = false;
+    let preAlertRefreshInterval = null;
 
     // ▼ 闊度微調
     const WIDTH_RATIO = 84;
@@ -38,7 +39,12 @@ GM_addStyle(`
     const key = () => LS_KEY_PREFIX + pid();
 
     const getRefreshInterval = () => { const v = parseInt(localStorage.getItem(LS_REFRESH_INTERVAL + pid())); return isNaN(v) ? 15 : v; };
-    const setRefreshInterval = (v) => { localStorage.setItem(LS_REFRESH_INTERVAL + pid(), String(v)); applyRefreshTimer(); };
+    const setRefreshInterval = (v) => {
+        localStorage.setItem(LS_REFRESH_INTERVAL + pid(), String(v));
+        applyRefreshTimer();
+        const rad = document.getElementById('ft-radio-' + v);
+        if (rad) rad.checked = true;
+    };
     const applyRefreshTimer = () => {
         if (refreshTimer) clearTimeout(refreshTimer);
         const mins = getRefreshInterval();
@@ -195,10 +201,10 @@ GM_addStyle(`
     };
 
     function showFloatingModal(deletedStocks = [], newStocks = [], changedStocks = []) {
-        // 有變動 → 停止自動刷新
-        const offRadio = document.getElementById('ft-radio-0');
-        if (offRadio && !offRadio.checked) {
-            offRadio.checked = true;
+        // 有變動 → 停止自動刷新，並記錄原本的設定
+        const currentInterval = getRefreshInterval();
+        if (currentInterval > 0) {
+            preAlertRefreshInterval = currentInterval;
             setRefreshInterval(0);
         }
 
@@ -222,6 +228,10 @@ GM_addStyle(`
             saveLastRatios();
             hideFloatingModal();
             hasAlerted = false;
+            if (preAlertRefreshInterval !== null) {
+                setRefreshInterval(preAlertRefreshInterval);
+                preAlertRefreshInterval = null;
+            }
             safeRender();
         });
     }
@@ -559,11 +569,9 @@ GM_addStyle(`
         if (keysToRemove.length > 0) {
             setTimeout(() => {
                 keysToRemove.forEach(item => {
-                    if (confirm(`發現股票 ${item.code} 已不在組合中，是否清除其持股記錄？`)) {
-                        localStorage.removeItem(item.shareKey);
-                        localStorage.removeItem(item.ratioKey);
-                        localStorage.removeItem(item.costKey);
-                    }
+                    localStorage.removeItem(item.shareKey);
+                    localStorage.removeItem(item.ratioKey);
+                    localStorage.removeItem(item.costKey);
                 });
             }, 500);
         }
