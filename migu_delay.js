@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Migu Live Delay Lock
 // @namespace    migu-live-delay
-// @version      5.3
+// @version      5.4
 // @description  咪咕直播固定 Delay，阻止播放器自動追返 LIVE
 // @match        https://www.miguvideo.com/p/live/*
 // @grant        none
@@ -249,7 +249,6 @@
         lockedVideo = video;
 
         const effectiveDelay = getEffectiveDelay(range);
-
         let target;
 
         if (effectiveDelay <= 0.05) {
@@ -366,23 +365,27 @@
 
             <div class="mdl-adjust-row">
                 <div class="mdl-step-group">
-                    <button class="mdl-adjust" data-delta="-0.1" type="button">−0.1</button>
-                    <button class="mdl-adjust" data-delta="0.1" type="button">+0.1</button>
+                    <span class="mdl-step-label">0.1</span>
+                    <button class="mdl-adjust" data-delta="-0.1" type="button">−</button>
+                    <button class="mdl-adjust" data-delta="0.1" type="button">+</button>
                 </div>
 
                 <div class="mdl-step-group">
-                    <button class="mdl-adjust" data-delta="-0.5" type="button">−0.5</button>
-                    <button class="mdl-adjust" data-delta="0.5" type="button">+0.5</button>
+                    <span class="mdl-step-label">0.5</span>
+                    <button class="mdl-adjust" data-delta="-0.5" type="button">−</button>
+                    <button class="mdl-adjust" data-delta="0.5" type="button">+</button>
                 </div>
 
                 <div class="mdl-step-group">
-                    <button class="mdl-adjust" data-delta="-1" type="button">−1</button>
-                    <button class="mdl-adjust" data-delta="1" type="button">+1</button>
+                    <span class="mdl-step-label">1</span>
+                    <button class="mdl-adjust" data-delta="-1" type="button">−</button>
+                    <button class="mdl-adjust" data-delta="1" type="button">+</button>
                 </div>
 
                 <div class="mdl-step-group">
-                    <button class="mdl-adjust" data-delta="-5" type="button">−5</button>
-                    <button class="mdl-adjust" data-delta="5" type="button">+5</button>
+                    <span class="mdl-step-label">5</span>
+                    <button class="mdl-adjust" data-delta="-5" type="button">−</button>
+                    <button class="mdl-adjust" data-delta="5" type="button">+</button>
                 </div>
             </div>
         `;
@@ -542,20 +545,16 @@
                 color: #aaa;
             }
 
-            #mdl-toggle,
-            .mdl-adjust {
-                border: 0;
-                color: #fff;
-                font-size: 22px;
-                font-weight: bold;
-                cursor: pointer;
-            }
-
             #mdl-toggle {
                 min-width: 92px;
                 padding: 12px 18px;
+                border: 0;
                 border-radius: 10px;
+
+                color: #fff;
                 font-size: 26px;
+                font-weight: bold;
+                cursor: pointer;
             }
 
             #mdl-toggle.on {
@@ -569,26 +568,39 @@
             .mdl-adjust-row {
                 display: flex;
                 align-items: center;
-                gap: 8px;
+                gap: 12px;
                 white-space: nowrap;
             }
 
             .mdl-step-group {
                 display: flex;
-                overflow: hidden;
-                border-radius: 10px;
-                background: #3a3a42;
+                align-items: center;
+                gap: 4px;
+            }
+
+            .mdl-step-label {
+                min-width: 46px;
+                color: #fff;
+                font-size: 22px;
+                font-weight: bold;
+                text-align: right;
             }
 
             .mdl-adjust {
-                min-width: 72px;
-                padding: 9px 10px;
-                border-radius: 0;
-                background: #3a3a42;
-            }
+                width: 46px;
+                height: 46px;
+                padding: 0;
 
-            .mdl-adjust + .mdl-adjust {
-                border-left: 1px solid rgba(255,255,255,.14);
+                border: 0;
+                border-radius: 8px;
+                background: #3a3a42;
+                color: #fff;
+
+                font-size: 26px;
+                font-weight: bold;
+                line-height: 46px;
+                text-align: center;
+                cursor: pointer;
             }
 
             .mdl-adjust:hover {
