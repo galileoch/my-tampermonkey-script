@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Migu Live Delay Lock
 // @namespace    migu-live-delay
-// @version      5.2
+// @version      5.3
 // @description  咪咕直播固定 Delay，阻止播放器自動追返 LIVE
 // @match        https://www.miguvideo.com/p/live/*
 // @grant        none
@@ -365,14 +365,25 @@
             </div>
 
             <div class="mdl-adjust-row">
-                <button class="mdl-adjust" data-delta="-0.1" type="button">−0.1</button>
-                <button class="mdl-adjust" data-delta="0.1" type="button">+0.1</button>
-                <button class="mdl-adjust" data-delta="-0.5" type="button">−0.5</button>
-                <button class="mdl-adjust" data-delta="0.5" type="button">+0.5</button>
-                <button class="mdl-adjust" data-delta="-1" type="button">−1</button>
-                <button class="mdl-adjust" data-delta="1" type="button">+1</button>
-                <button class="mdl-adjust" data-delta="-5" type="button">−5</button>
-                <button class="mdl-adjust" data-delta="5" type="button">+5</button>
+                <div class="mdl-step-group">
+                    <button class="mdl-adjust" data-delta="-0.1" type="button">−0.1</button>
+                    <button class="mdl-adjust" data-delta="0.1" type="button">+0.1</button>
+                </div>
+
+                <div class="mdl-step-group">
+                    <button class="mdl-adjust" data-delta="-0.5" type="button">−0.5</button>
+                    <button class="mdl-adjust" data-delta="0.5" type="button">+0.5</button>
+                </div>
+
+                <div class="mdl-step-group">
+                    <button class="mdl-adjust" data-delta="-1" type="button">−1</button>
+                    <button class="mdl-adjust" data-delta="1" type="button">+1</button>
+                </div>
+
+                <div class="mdl-step-group">
+                    <button class="mdl-adjust" data-delta="-5" type="button">−5</button>
+                    <button class="mdl-adjust" data-delta="5" type="button">+5</button>
+                </div>
             </div>
         `;
 
@@ -482,7 +493,7 @@
 
                 display: flex;
                 flex-direction: column;
-                gap: 12px;
+                gap: 10px;
 
                 padding: 14px 18px;
 
@@ -534,9 +545,8 @@
             #mdl-toggle,
             .mdl-adjust {
                 border: 0;
-                border-radius: 10px;
                 color: #fff;
-                font-size: 24px;
+                font-size: 22px;
                 font-weight: bold;
                 cursor: pointer;
             }
@@ -544,6 +554,8 @@
             #mdl-toggle {
                 min-width: 92px;
                 padding: 12px 18px;
+                border-radius: 10px;
+                font-size: 26px;
             }
 
             #mdl-toggle.on {
@@ -555,15 +567,28 @@
             }
 
             .mdl-adjust-row {
-                display: grid;
-                grid-template-columns: repeat(4, minmax(86px, 1fr));
+                display: flex;
+                align-items: center;
                 gap: 8px;
+                white-space: nowrap;
+            }
+
+            .mdl-step-group {
+                display: flex;
+                overflow: hidden;
+                border-radius: 10px;
+                background: #3a3a42;
             }
 
             .mdl-adjust {
-                min-width: 86px;
-                padding: 10px 12px;
+                min-width: 72px;
+                padding: 9px 10px;
+                border-radius: 0;
                 background: #3a3a42;
+            }
+
+            .mdl-adjust + .mdl-adjust {
+                border-left: 1px solid rgba(255,255,255,.14);
             }
 
             .mdl-adjust:hover {
