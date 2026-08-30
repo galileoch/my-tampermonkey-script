@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Migu Live Delay Lock
 // @namespace    migu-live-delay
-// @version      5.1
+// @version      5.2
 // @description  咪咕直播固定 Delay，阻止播放器自動追返 LIVE
 // @match        https://www.miguvideo.com/p/live/*
 // @grant        none
@@ -11,80 +11,44 @@
 (function () {
     'use strict';
 
-    // =========================================================
-    // Config
-    // =========================================================
-
     const DEFAULT_DELAY = 10.0;
+    const KEY_DELAY = 'migu_delay_lock_seconds_v5';
+    const KEY_ENABLED = 'migu_delay_lock_enabled_v5';
 
-    const KEY_DELAY =
-        'migu_delay_lock_seconds_v5';
-
-    const KEY_ENABLED =
-        'migu_delay_lock_enabled_v5';
-
-    let delaySeconds =
-        parseFloat(
-            localStorage.getItem(KEY_DELAY)
-            ?? DEFAULT_DELAY
-        );
+    let delaySeconds = parseFloat(
+        localStorage.getItem(KEY_DELAY) ?? DEFAULT_DELAY
+    );
 
     if (!Number.isFinite(delaySeconds)) {
         delaySeconds = DEFAULT_DELAY;
     }
 
-    delaySeconds =
-        Math.max(
-            0,
-            Math.min(3600, delaySeconds)
-        );
+    delaySeconds = Math.max(0, Math.min(3600, delaySeconds));
 
+    let enabled = localStorage.getItem(KEY_ENABLED) !== 'false';
 
-    let enabled =
-        localStorage.getItem(KEY_ENABLED)
-        !== 'false';
+    const currentTimeDescriptor = Object.getOwnPropertyDescriptor(
+        HTMLMediaElement.prototype,
+        'currentTime'
+    );
 
+    const playbackRateDescriptor = Object.getOwnPropertyDescriptor(
+        HTMLMediaElement.prototype,
+        'playbackRate'
+    );
 
-    // =========================================================
-    // Native video accessors
-    // =========================================================
-
-    const currentTimeDescriptor =
-        Object.getOwnPropertyDescriptor(
-            HTMLMediaElement.prototype,
-            'currentTime'
-        );
-
-    const playbackRateDescriptor =
-        Object.getOwnPropertyDescriptor(
-            HTMLMediaElement.prototype,
-            'playbackRate'
-        );
-
-    const nativeFastSeek =
-        HTMLMediaElement.prototype.fastSeek;
+    const nativeFastSeek = HTMLMediaElement.prototype.fastSeek;
 
     let lockedVideo = null;
     let lastCorrectionTime = 0;
 
-
-    // =========================================================
-    // Helpers
-    // =========================================================
-
     function round1(value) {
-        return (
-            Math.round(
-                (value + Number.EPSILON) * 10
-            ) / 10
-        );
+        return Math.round((value + Number.EPSILON) * 10) / 10;
     }
 
     function nativeCurrentTime(video) {
         try {
-            return currentTimeDescriptor
-                .get
-                .call(video);
+            return currentTimeDescriptor.get.call(video);
         } catch {
             return video.currentTime;
         }
@@ -92,146 +56,86 @@
 
     function nativeSetCurrentTime(video, value) {
         try {
-            currentTimeDescriptor
-                .set
-                .call(video, value);
-
+            currentTimeDescriptor.set.call(video, value);
             return true;
-
         } catch (error) {
-            console.warn(
-                '[Migu Delay] native seek failed',
-                error
-            );
-
+            console.warn('[Migu Delay] native seek failed', error);
             return false;
         }
     }
 
-
-    // =========================================================
-    // Main video
-    // =========================================================
-
     function getMainVideo() {
-        const videos =
-            [...document.querySelectorAll('video')];
+        const videos = [...document.querySelectorAll('video')];
 
-        if (!videos.length)
+        if (!videos.length) {
             return null;
+        }
 
         return videos
             .slice()
-            .sort(
-                (a, b) => {
-                    const areaA =
-                        a.clientWidth * a.clientHeight;
-
-                    const areaB =
-                        b.clientWidth * b.clientHeight;
-
-                    return areaB - areaA;
-                }
-            )[0];
+            .sort((a, b) => {
+                const areaA = a.clientWidth * a.clientHeight;
+                const areaB = b.clientWidth * b.clientHeight;
+                return areaB - areaA;
+            })[0];
     }
-
-
-    // =========================================================
-    // Seekable range
-    // =========================================================
 
     function getSeekRange(video) {
         try {
-            if (
-                !video ||
-                !video.seekable ||
-                video.seekable.length === 0
-            ) {
+            if (!video || !video.seekable || video.seekable.length === 0) {
                 return null;
             }
 
-            const last =
-                video.seekable.length - 1;
+            const last = video.seekable.length - 1;
 
             return {
                 start: video.seekable.start(0),
                 end: video.seekable.end(last)
             };
-
         } catch {
             return null;
         }
     }
 
-
-    // =========================================================
-    // Effective Delay
-    // =========================================================
-
     function getEffectiveDelay(range) {
-        if (!range)
+        if (!range) {
             return 0;
+        }
 
-        const available =
-            Math.max(
-                0,
-                range.end -
-                range.start -
-                0.05
-            );
-
-        return Math.min(
-            delaySeconds,
-            available
+        const available = Math.max(
+            0,
+            range.end - range.start - 0.05
         );
+
+        return Math.min(delaySeconds, available);
     }
 
-
-    // =========================================================
-    // 判斷 Migu 是否正在嘗試追返 LIVE
-    // =========================================================
-
     function shouldBlockSeek(video, requestedTime) {
-        if (
-            !enabled ||
-            video !== lockedVideo
-        ) {
+        if (!enabled || video !== lockedVideo) {
             return false;
         }
 
-        const range =
-            getSeekRange(video);
+        const range = getSeekRange(video);
 
-        if (!range)
+        if (!range) {
             return false;
+        }
 
-        const effectiveDelay =
-            getEffectiveDelay(range);
+        const effectiveDelay = getEffectiveDelay(range);
 
-        if (effectiveDelay < 0.10)
+        if (effectiveDelay < 0.10) {
             return false;
+        }
 
-        const requestedBehindLive =
-            range.end - Number(requestedTime);
+        const requestedBehindLive = range.end - Number(requestedTime);
+        const minimumAllowedDelay = Math.max(0, effectiveDelay - 0.20);
 
-        const minimumAllowedDelay =
-            Math.max(
-                0,
-                effectiveDelay - 0.20
-            );
-
-        if (
-            requestedBehindLive <
-            minimumAllowedDelay
-        ) {
-            console.debug(
-                '[Migu Delay] BLOCKED forward seek',
-                {
-                    requestedTime,
-                    requestedBehindLive,
-                    protectedDelay: effectiveDelay
-                }
-            );
+        if (requestedBehindLive < minimumAllowedDelay) {
+            console.debug('[Migu Delay] BLOCKED forward seek', {
+                requestedTime,
+                requestedBehindLive,
+                protectedDelay: effectiveDelay
+            });
 
             return true;
         }
@@ -239,394 +143,258 @@
         return false;
     }
 
-
-    // =========================================================
-    // Patch individual video
-    // =========================================================
-
     function patchVideo(video) {
-        if (!video)
+        if (!video || video.__miguDelayLockPatched) {
             return;
-
-        if (video.__miguDelayLockPatched)
-            return;
+        }
 
         video.__miguDelayLockPatched = true;
 
-        // currentTime
         try {
-            Object.defineProperty(
-                video,
-                'currentTime',
-                {
+            Object.defineProperty(video, 'currentTime', {
+                configurable: true,
+                enumerable: true,
+
+                get() {
+                    return currentTimeDescriptor.get.call(this);
+                },
+
+                set(value) {
+                    if (shouldBlockSeek(this, value)) {
+                        return;
+                    }
+
+                    return currentTimeDescriptor.set.call(this, value);
+                }
+            });
+        } catch (error) {
+            console.warn('[Migu Delay] currentTime patch failed', error);
+        }
+
+        if (playbackRateDescriptor) {
+            try {
+                Object.defineProperty(video, 'playbackRate', {
                     configurable: true,
                     enumerable: true,
 
                     get() {
-                        return currentTimeDescriptor
-                            .get
-                            .call(this);
+                        return playbackRateDescriptor.get.call(this);
                     },
 
                     set(value) {
+                        const rate = Number(value);
+
                         if (
-                            shouldBlockSeek(
-                                this,
-                                value
-                            )
+                            enabled &&
+                            this === lockedVideo &&
+                            Number.isFinite(rate) &&
+                            rate > 1.001
                         ) {
-                            return;
+                            console.debug(
+                                '[Migu Delay] BLOCKED catch-up playbackRate:',
+                                rate
+                            );
+
+                            return playbackRateDescriptor.set.call(this, 1.0);
                         }
 
-                        return currentTimeDescriptor
-                            .set
-                            .call(this, value);
+                        return playbackRateDescriptor.set.call(this, value);
                     }
-                }
-            );
-
-        } catch (error) {
-            console.warn(
-                '[Migu Delay] currentTime patch failed',
-                error
-            );
-        }
-
-        // playbackRate
-        if (playbackRateDescriptor) {
-            try {
-                Object.defineProperty(
-                    video,
-                    'playbackRate',
-                    {
-                        configurable: true,
-                        enumerable: true,
-
-                        get() {
-                            return playbackRateDescriptor
-                                .get
-                                .call(this);
-                        },
-
-                        set(value) {
-                            const rate = Number(value);
-
-                            if (
-                                enabled &&
-                                this === lockedVideo &&
-                                Number.isFinite(rate) &&
-                                rate > 1.001
-                            ) {
-                                console.debug(
-                                    '[Migu Delay] BLOCKED catch-up playbackRate:',
-                                    rate
-                                );
-
-                                return playbackRateDescriptor
-                                    .set
-                                    .call(this, 1.0);
-                            }
-
-                            return playbackRateDescriptor
-                                .set
-                                .call(this, value);
-                        }
-                    }
-                );
-
+                });
             } catch (error) {
-                console.warn(
-                    '[Migu Delay] playbackRate patch failed',
-                    error
-                );
+                console.warn('[Migu Delay] playbackRate patch failed', error);
             }
         }
 
-        // fastSeek
         if (typeof nativeFastSeek === 'function') {
             try {
-                Object.defineProperty(
-                    video,
-                    'fastSeek',
-                    {
-                        configurable: true,
+                Object.defineProperty(video, 'fastSeek', {
+                    configurable: true,
 
-                        value: function (time) {
-                            if (
-                                shouldBlockSeek(
-                                    this,
-                                    time
-                                )
-                            ) {
-                                console.debug(
-                                    '[Migu Delay] BLOCKED fastSeek',
-                                    time
-                                );
-
-                                return;
-                            }
-
-                            return nativeFastSeek
-                                .call(this, time);
+                    value: function (time) {
+                        if (shouldBlockSeek(this, time)) {
+                            console.debug('[Migu Delay] BLOCKED fastSeek', time);
+                            return;
                         }
-                    }
-                );
 
+                        return nativeFastSeek.call(this, time);
+                    }
+                });
             } catch (error) {
-                console.warn(
-                    '[Migu Delay] fastSeek patch failed',
-                    error
-                );
+                console.warn('[Migu Delay] fastSeek patch failed', error);
             }
         }
 
         console.log('[Migu Delay] video patched');
     }
 
-
-    // =========================================================
-    // Apply delay
-    // =========================================================
-
     function applyDelay() {
-        if (!enabled)
+        if (!enabled) {
             return false;
+        }
 
-        const video =
-            getMainVideo();
+        const video = getMainVideo();
 
-        if (!video)
+        if (!video) {
             return false;
+        }
 
-        const range =
-            getSeekRange(video);
+        const range = getSeekRange(video);
 
-        if (!range)
+        if (!range) {
             return false;
+        }
 
         patchVideo(video);
         lockedVideo = video;
 
-        const effectiveDelay =
-            getEffectiveDelay(range);
+        const effectiveDelay = getEffectiveDelay(range);
 
         let target;
 
         if (effectiveDelay <= 0.05) {
             target = range.end - 0.05;
         } else {
-            target =
-                range.end - effectiveDelay;
+            target = range.end - effectiveDelay;
         }
 
-        target =
-            Math.max(
-                range.start + 0.01,
-                Math.min(
-                    range.end - 0.01,
-                    target
-                )
-            );
+        target = Math.max(
+            range.start + 0.01,
+            Math.min(range.end - 0.01, target)
+        );
 
-        const success =
-            nativeSetCurrentTime(
-                video,
-                target
-            );
+        const success = nativeSetCurrentTime(video, target);
 
         if (success) {
             try {
                 if (playbackRateDescriptor) {
-                    playbackRateDescriptor
-                        .set
-                        .call(video, 1.0);
+                    playbackRateDescriptor.set.call(video, 1.0);
                 }
             } catch {}
 
             lastCorrectionTime = Date.now();
 
-            console.log(
-                '[Migu Delay] applied',
-                {
-                    requestedDelay:
-                        delaySeconds.toFixed(1),
-
-                    effectiveDelay:
-                        effectiveDelay.toFixed(1),
-
-                    liveEdge: range.end,
-                    target,
-
-                    buffer:
-                        (
-                            range.end - range.start
-                        ).toFixed(2)
-                }
-            );
+            console.log('[Migu Delay] applied', {
+                requestedDelay: delaySeconds.toFixed(1),
+                effectiveDelay: effectiveDelay.toFixed(1),
+                liveEdge: range.end,
+                target,
+                buffer: (range.end - range.start).toFixed(2)
+            });
         }
 
         return success;
     }
 
-
-    // =========================================================
-    // Watchdog
-    // =========================================================
-
     function watchdog() {
-        if (!enabled)
+        if (!enabled) {
             return;
+        }
 
-        const video =
-            getMainVideo();
+        const video = getMainVideo();
 
-        if (!video)
+        if (!video) {
             return;
+        }
 
         if (video !== lockedVideo) {
             applyDelay();
             return;
         }
 
-        const range =
-            getSeekRange(video);
+        const range = getSeekRange(video);
 
-        if (!range)
+        if (!range) {
             return;
+        }
 
-        const effectiveDelay =
-            getEffectiveDelay(range);
+        const effectiveDelay = getEffectiveDelay(range);
 
-        if (effectiveDelay < 0.20)
+        if (effectiveDelay < 0.20) {
             return;
+        }
 
-        const current =
-            nativeCurrentTime(video);
+        const current = nativeCurrentTime(video);
+        const actualDelay = range.end - current;
 
-        const actualDelay =
-            range.end - current;
+        const collapseTolerance = Math.max(
+            0.40,
+            Math.min(2.50, effectiveDelay * 0.25)
+        );
 
-        const collapseTolerance =
-            Math.max(
-                0.40,
-                Math.min(
-                    2.50,
-                    effectiveDelay * 0.25
-                )
-            );
+        const collapsed = actualDelay < (effectiveDelay - collapseTolerance);
+        const cooldownPassed = Date.now() - lastCorrectionTime > 3000;
 
-        const collapsed =
-            actualDelay <
-            (
-                effectiveDelay -
-                collapseTolerance
-            );
-
-        const cooldownPassed =
-            Date.now() -
-            lastCorrectionTime >
-            3000;
-
-        if (
-            collapsed &&
-            cooldownPassed
-        ) {
-            console.warn(
-                '[Migu Delay] LIVE catch-up detected',
-                {
-                    desired:
-                        effectiveDelay.toFixed(1),
-
-                    actual:
-                        actualDelay.toFixed(1)
-                }
-            );
+        if (collapsed && cooldownPassed) {
+            console.warn('[Migu Delay] LIVE catch-up detected', {
+                desired: effectiveDelay.toFixed(1),
+                actual: actualDelay.toFixed(1)
+            });
 
             applyDelay();
         }
     }
 
-
-    // =========================================================
-    // Minimal GUI
-    // =========================================================
-
     function createUI() {
-        if (!document.body)
-            return;
-
-        if (
-            document.getElementById(
-                'migu-delay-lock-ui'
-            )
-        ) {
+        if (!document.body) {
             return;
         }
 
-        const box =
-            document.createElement('div');
+        if (document.getElementById('migu-delay-lock-ui')) {
+            return;
+        }
 
-        box.id =
-            'migu-delay-lock-ui';
+        const box = document.createElement('div');
+        box.id = 'migu-delay-lock-ui';
 
         box.innerHTML = `
-            <span class="mdl-label">
-                Delay
-            </span>
+            <div class="mdl-main-row">
+                <span class="mdl-label">Delay</span>
 
-            <input
-                id="mdl-delay"
-                type="number"
-                min="0"
-                max="3600"
-                step="0.1"
-            >
+                <input
+                    id="mdl-delay"
+                    type="number"
+                    min="0"
+                    max="3600"
+                    step="0.1"
+                >
 
-            <span class="mdl-sec">
-                s
-            </span>
+                <span class="mdl-sec">s</span>
 
-            <button
-                id="mdl-toggle"
-                type="button"
-            ></button>
+                <button id="mdl-toggle" type="button"></button>
+            </div>
+
+            <div class="mdl-adjust-row">
+                <button class="mdl-adjust" data-delta="-0.1" type="button">−0.1</button>
+                <button class="mdl-adjust" data-delta="0.1" type="button">+0.1</button>
+                <button class="mdl-adjust" data-delta="-0.5" type="button">−0.5</button>
+                <button class="mdl-adjust" data-delta="0.5" type="button">+0.5</button>
+                <button class="mdl-adjust" data-delta="-1" type="button">−1</button>
+                <button class="mdl-adjust" data-delta="1" type="button">+1</button>
+                <button class="mdl-adjust" data-delta="-5" type="button">−5</button>
+                <button class="mdl-adjust" data-delta="5" type="button">+5</button>
+            </div>
         `;
 
         document.body.appendChild(box);
         addCSS();
 
-        const input =
-            document.getElementById(
-                'mdl-delay'
-            );
-
-        const button =
-            document.getElementById(
-                'mdl-toggle'
-            );
+        const input = document.getElementById('mdl-delay');
+        const toggleButton = document.getElementById('mdl-toggle');
 
         delaySeconds = round1(delaySeconds);
         input.value = delaySeconds.toFixed(1);
 
-        // Delay input
-        function saveDelay() {
-            let value =
-                parseFloat(input.value);
-
+        function saveDelayValue(value) {
             if (!Number.isFinite(value)) {
-                input.value =
-                    delaySeconds.toFixed(1);
-
+                input.value = delaySeconds.toFixed(1);
                 return;
             }
 
-            value =
-                Math.max(
-                    0,
-                    Math.min(3600, value)
-                );
+            delaySeconds = round1(
+                Math.max(0, Math.min(3600, value))
+            );
 
-            delaySeconds = round1(value);
             input.value = delaySeconds.toFixed(1);
 
             localStorage.setItem(
@@ -634,148 +402,115 @@
                 delaySeconds.toFixed(1)
             );
 
-            if (enabled)
+            if (enabled) {
                 applyDelay();
+            }
         }
 
-        input.addEventListener(
-            'change',
-            saveDelay
-        );
+        function saveDelayFromInput() {
+            saveDelayValue(parseFloat(input.value));
+        }
 
-        input.addEventListener(
-            'keydown',
-            event => {
-                if (event.key === 'Enter') {
-                    saveDelay();
-                    input.blur();
-                }
+        input.addEventListener('change', saveDelayFromInput);
+
+        input.addEventListener('keydown', event => {
+            if (event.key === 'Enter') {
+                saveDelayFromInput();
+                input.blur();
             }
-        );
+        });
 
-        // ON/OFF
-        button.addEventListener(
-            'click',
-            () => {
-                enabled = !enabled;
+        box.querySelectorAll('.mdl-adjust').forEach(adjustButton => {
+            adjustButton.addEventListener('click', () => {
+                const delta = Number(adjustButton.dataset.delta);
 
-                localStorage.setItem(
-                    KEY_ENABLED,
-                    String(enabled)
-                );
-
-                updateToggle();
-
-                if (enabled) {
-                    applyDelay();
-                } else {
-                    console.log('[Migu Delay] OFF');
+                if (!Number.isFinite(delta)) {
+                    return;
                 }
+
+                saveDelayValue(delaySeconds + delta);
+            });
+        });
+
+        toggleButton.addEventListener('click', () => {
+            enabled = !enabled;
+
+            localStorage.setItem(
+                KEY_ENABLED,
+                String(enabled)
+            );
+
+            updateToggle();
+
+            if (enabled) {
+                applyDelay();
+            } else {
+                console.log('[Migu Delay] OFF');
             }
-        );
+        });
 
         makeDraggable(box);
         updateToggle();
     }
 
-
-    // =========================================================
-    // Toggle display
-    // =========================================================
-
     function updateToggle() {
-        const button =
-            document.getElementById(
-                'mdl-toggle'
-            );
+        const button = document.getElementById('mdl-toggle');
 
-        if (!button)
-            return;
-
-        button.textContent =
-            enabled ? 'ON' : 'OFF';
-
-        button.classList.toggle(
-            'on',
-            enabled
-        );
-
-        button.classList.toggle(
-            'off',
-            !enabled
-        );
-    }
-
-
-    // =========================================================
-    // CSS — approximately 2x the original control size
-    // =========================================================
-
-    function addCSS() {
-        if (
-            document.getElementById(
-                'migu-delay-lock-css'
-            )
-        ) {
+        if (!button) {
             return;
         }
 
-        const style =
-            document.createElement('style');
+        button.textContent = enabled ? 'ON' : 'OFF';
+        button.classList.toggle('on', enabled);
+        button.classList.toggle('off', !enabled);
+    }
 
-        style.id =
-            'migu-delay-lock-css';
+    function addCSS() {
+        if (document.getElementById('migu-delay-lock-css')) {
+            return;
+        }
+
+        const style = document.createElement('style');
+        style.id = 'migu-delay-lock-css';
 
         style.textContent = `
             #migu-delay-lock-ui {
                 position: fixed;
-
                 top: 110px;
                 right: 18px;
-
                 z-index: 2147483647;
 
                 display: flex;
-                align-items: center;
-
+                flex-direction: column;
                 gap: 12px;
+
                 padding: 14px 18px;
 
-                background:
-                    rgba(18, 18, 22, .94);
-
-                border:
-                    2px solid
-                    rgba(255,255,255,.16);
-
+                background: rgba(18, 18, 22, .94);
+                border: 2px solid rgba(255,255,255,.16);
                 border-radius: 16px;
-
-                box-shadow:
-                    0 8px 32px
-                    rgba(0,0,0,.42);
+                box-shadow: 0 8px 32px rgba(0,0,0,.42);
 
                 color: #fff;
-
-                font-family:
-                    Arial,
-                    "Microsoft YaHei",
-                    sans-serif;
-
+                font-family: Arial, "Microsoft YaHei", sans-serif;
                 font-size: 26px;
 
                 user-select: none;
                 cursor: move;
             }
 
+            .mdl-main-row {
+                display: flex;
+                align-items: center;
+                gap: 12px;
+            }
+
             #mdl-delay {
                 box-sizing: border-box;
-
                 width: 152px;
                 padding: 10px;
 
-                border:
-                    2px solid #555;
-
+                border: 2px solid #555;
                 border-radius: 10px;
                 outline: none;
 
@@ -784,7 +519,6 @@
 
                 font-size: 28px;
                 font-weight: 600;
-
                 text-align: center;
                 cursor: text;
             }
@@ -797,19 +531,19 @@
                 color: #aaa;
             }
 
+            #mdl-toggle,
+            .mdl-adjust {
+                border: 0;
+                border-radius: 10px;
+                color: #fff;
+                font-size: 24px;
+                font-weight: bold;
+                cursor: pointer;
+            }
+
             #mdl-toggle {
                 min-width: 92px;
                 padding: 12px 18px;
-
-                border: 0;
-                border-radius: 10px;
-
-                color: #fff;
-
-                font-size: 26px;
-                font-weight: bold;
-
-                cursor: pointer;
             }
 
             #mdl-toggle.on {
@@ -819,168 +553,116 @@
             #mdl-toggle.off {
                 background: #9c3636;
             }
+
+            .mdl-adjust-row {
+                display: grid;
+                grid-template-columns: repeat(4, minmax(86px, 1fr));
+                gap: 8px;
+            }
+
+            .mdl-adjust {
+                min-width: 86px;
+                padding: 10px 12px;
+                background: #3a3a42;
+            }
+
+            .mdl-adjust:hover {
+                background: #53535d;
+            }
         `;
 
         document.head.appendChild(style);
     }
 
-
-    // =========================================================
-    // Drag
-    // =========================================================
-
     function makeDraggable(box) {
         let dragging = false;
-
         let startX = 0;
         let startY = 0;
-
         let originalX = 0;
         let originalY = 0;
 
-        box.addEventListener(
-            'mousedown',
-            event => {
-                if (
-                    event.target.closest(
-                        'input, button'
-                    )
-                ) {
-                    return;
-                }
-
-                dragging = true;
-
-                startX = event.clientX;
-                startY = event.clientY;
-
-                const rect =
-                    box.getBoundingClientRect();
-
-                originalX = rect.left;
-                originalY = rect.top;
-
-                box.style.right = 'auto';
-                event.preventDefault();
+        box.addEventListener('mousedown', event => {
+            if (event.target.closest('input, button')) {
+                return;
             }
-        );
 
-        document.addEventListener(
-            'mousemove',
-            event => {
-                if (!dragging)
-                    return;
+            dragging = true;
+            startX = event.clientX;
+            startY = event.clientY;
 
-                let x =
-                    originalX +
-                    event.clientX -
-                    startX;
+            const rect = box.getBoundingClientRect();
+            originalX = rect.left;
+            originalY = rect.top;
 
-                let y =
-                    originalY +
-                    event.clientY -
-                    startY;
+            box.style.right = 'auto';
+            event.preventDefault();
+        });
 
-                x =
-                    Math.max(
-                        0,
-                        Math.min(
-                            window.innerWidth -
-                            box.offsetWidth,
-                            x
-                        )
-                    );
-
-                y =
-                    Math.max(
-                        0,
-                        Math.min(
-                            window.innerHeight -
-                            box.offsetHeight,
-                            y
-                        )
-                    );
-
-                box.style.left = x + 'px';
-                box.style.top = y + 'px';
+        document.addEventListener('mousemove', event => {
+            if (!dragging) {
+                return;
             }
-        );
 
-        document.addEventListener(
-            'mouseup',
-            () => {
-                dragging = false;
-            }
-        );
+            let x = originalX + event.clientX - startX;
+            let y = originalY + event.clientY - startY;
+
+            x = Math.max(
+                0,
+                Math.min(window.innerWidth - box.offsetWidth, x)
+            );
+
+            y = Math.max(
+                0,
+                Math.min(window.innerHeight - box.offsetHeight, y)
+            );
+
+            box.style.left = x + 'px';
+            box.style.top = y + 'px';
+        });
+
+        document.addEventListener('mouseup', () => {
+            dragging = false;
+        });
     }
-
-
-    // =========================================================
-    // Start
-    // =========================================================
 
     function start() {
         createUI();
 
         let initialApplied = false;
 
-        setInterval(
-            () => {
-                createUI();
+        setInterval(() => {
+            createUI();
 
-                if (
-                    enabled &&
-                    !initialApplied
-                ) {
-                    initialApplied = applyDelay();
-                }
-            },
-            500
-        );
-
-        setInterval(
-            watchdog,
-            1000
-        );
-
-        const observer =
-            new MutationObserver(
-                () => {
-                    createUI();
-                }
-            );
-
-        observer.observe(
-            document.documentElement,
-            {
-                childList: true,
-                subtree: true
+            if (enabled && !initialApplied) {
+                initialApplied = applyDelay();
             }
-        );
-    }
+        }, 500);
 
+        setInterval(watchdog, 1000);
+
+        const observer = new MutationObserver(() => {
+            createUI();
+        });
+
+        observer.observe(document.documentElement, {
+            childList: true,
+            subtree: true
+        });
+    }
 
     if (document.body) {
         start();
-
     } else {
-        const bodyObserver =
-            new MutationObserver(
-                () => {
-                    if (document.body) {
-                        bodyObserver.disconnect();
-                        start();
-                    }
-                }
-            );
-
-        bodyObserver.observe(
-            document.documentElement,
-            {
-                childList: true,
-                subtree: true
+        const bodyObserver = new MutationObserver(() => {
+            if (document.body) {
+                bodyObserver.disconnect();
+                start();
             }
-        );
-    }
+        });
 
+        bodyObserver.observe(document.documentElement, {
+            childList: true,
+            subtree: true
+        });
+    }
 })();
