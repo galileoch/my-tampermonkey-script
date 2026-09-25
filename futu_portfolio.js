@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Futunn Portfolio Amount Column ($) + Safe Width
 // @namespace    hk.tools.futunn.amountcol
-// @version      1.4.1
+// @version      1.5.0
 // @match        https://portfolio.futunn.com/portfolio/*
 // @grant        GM_addStyle
 // ==/UserScript==
@@ -23,6 +23,7 @@ GM_addStyle(`
     const LS_COST_PREFIX = 'futunn_cost_';
     const LS_LAST_RATIOS = 'futunn_last_ratios_';
     const LS_REFRESH_INTERVAL = 'futunn_refresh_interval_';
+    const LS_REFRESH_WINDOW = 'futunn_refresh_window_';
 
     let isManualOverride = false;
     let preAlertRefreshInterval = null;
@@ -39,18 +40,96 @@ GM_addStyle(`
     const key = () => LS_KEY_PREFIX + pid();
 
     const getRefreshInterval = () => { const v = parseInt(localStorage.getItem(LS_REFRESH_INTERVAL + pid())); return isNaN(v) ? 15 : v; };
+    const getRefreshWindow = () => localStorage.getItem(LS_REFRESH_WINDOW + pid()) || 'us';
+
+    const getZonedParts = (timeZone, date = new Date()) => {
+        const parts = new Intl.DateTimeFormat('en-US', {
+            timeZone,
+            year: 'numeric', month: '2-digit', day: '2-digit',
+            hour: '2-digit', minute: '2-digit', second: '2-digit',
+            hourCycle: 'h23'
+        }).formatToParts(date);
+        return Object.fromEntries(parts.filter(p => p.type !== 'literal').map(p => [p.type, p.value]));
+    };
+
+    const getTimeZoneOffsetMinutes = (timeZone, date = new Date()) => {
+        const p = getZonedParts(timeZone, date);
+        const zonedAsUtc = Date.UTC(
+            Number(p.year), Number(p.month) - 1, Number(p.day),
+            Number(p.hour), Number(p.minute), Number(p.second)
+        );
+        return Math.round((zonedAsUtc - date.getTime()) / 60000);
+    };
+
+    const isUsDaylightTime = (date = new Date()) =>
+        getTimeZoneOffsetMinutes('America/New_York', date) === -240;
+
+    const getUsRefreshSession = (date = new Date()) => {
+        const isDst = isUsDaylightTime(date);
+        return isDst
+            ? { isDst, start: 21 * 60 + 25, end: 4 * 60, label: '夏令 21:25–04:00 HKT' }
+            : { isDst, start: 22 * 60 + 25, end: 5 * 60, label: '冬令 22:25–05:00 HKT' };
+    };
+
+    const isWithinUsRefreshWindow = (date = new Date()) => {
+        const hkt = getZonedParts('Asia/Hong_Kong', date);
+        const minuteOfDay = Number(hkt.hour) * 60 + Number(hkt.minute);
+        const { start, end } = getUsRefreshSession(date);
+        return minuteOfDay >= start || minuteOfDay < end;
+    };
+
+    const isRefreshWindowActive = (date = new Date()) =>
+        getRefreshWindow() === '24h' || isWithinUsRefreshWindow(date);
+
+    const updateRefreshWindowStatus = () => {
+        const status = document.getElementById('ft-refresh-window-status');
+        if (!status) return;
+        if (getRefreshWindow() === '24h') {
+            status.textContent = '全天';
+            return;
+        }
+        const session = getUsRefreshSession();
+        status.textContent = session.label + (isWithinUsRefreshWindow() ? ' · 時段內' : ' · 時段外');
+    };
+
     const setRefreshInterval = (v) => {
         localStorage.setItem(LS_REFRESH_INTERVAL + pid(), String(v));
         applyRefreshTimer();
         const rad = document.getElementById('ft-radio-' + v);
         if (rad) rad.checked = true;
     };
+
+    const setRefreshWindow = (v) => {
+        localStorage.setItem(LS_REFRESH_WINDOW + pid(), v);
+        const rad = document.getElementById('ft-window-' + v);
+        if (rad) rad.checked = true;
+        updateRefreshWindowStatus();
+        applyRefreshTimer();
+    };
+
     const applyRefreshTimer = () => {
         if (refreshTimer) clearTimeout(refreshTimer);
+        refreshTimer = null;
+
         const mins = getRefreshInterval();
-        if (mins > 0) {
-            refreshTimer = setTimeout(() => location.reload(), mins * 60 * 1000);
+        updateRefreshWindowStatus();
+        if (mins <= 0) return;
+
+        // 美股時段模式：時段外只每分鐘重新檢查，不 reload 頁面。
+        // 這樣即使頁面長時間開住，進入有效時段後亦會自動恢復刷新。
+        if (!isRefreshWindowActive()) {
+            refreshTimer = setTimeout(applyRefreshTimer, 60 * 1000);
+            return;
         }
+
+        refreshTimer = setTimeout(() => {
+            // 防止 timer 跨過收市時間後仍然 reload。
+            if (isRefreshWindowActive()) {
+                location.reload();
+            } else {
+                applyRefreshTimer();
+            }
+        }, mins * 60 * 1000);
     };
     applyRefreshTimer();
 
@@ -113,6 +192,43 @@ GM_addStyle(`
             refreshRow.appendChild(optLabel);
         });
 
+        // ── Refresh active-window row ──
+        const windowRow = document.createElement('div');
+        windowRow.style.cssText = 'padding:6px 10px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;border-bottom:1px solid rgba(255,255,255,0.08);flex-shrink:0;';
+
+        const wLabel = document.createElement('span');
+        wLabel.textContent = '刷新時段:';
+        wLabel.style.opacity = '0.65';
+        windowRow.appendChild(wLabel);
+
+        const windowOptions = [
+            { v: 'us', t: '美股時段' },
+            { v: '24h', t: '24小時' }
+        ];
+        const currentWindow = getRefreshWindow();
+        windowOptions.forEach(opt => {
+            const optLabel = document.createElement('label');
+            optLabel.style.cssText = 'display:flex;align-items:center;gap:3px;cursor:pointer;margin:0;user-select:none;';
+            const radio = document.createElement('input');
+            radio.type = 'radio';
+            radio.name = 'ft-refresh-window-radio';
+            radio.id = 'ft-window-' + opt.v;
+            radio.value = opt.v;
+            radio.style.cssText = 'margin:0;cursor:pointer;';
+            if (opt.v === currentWindow) radio.checked = true;
+            radio.onchange = e => { if (e.target.checked) setRefreshWindow(e.target.value); };
+            const text = document.createElement('span');
+            text.textContent = opt.t;
+            optLabel.appendChild(radio);
+            optLabel.appendChild(text);
+            windowRow.appendChild(optLabel);
+        });
+
+        const windowStatus = document.createElement('span');
+        windowStatus.id = 'ft-refresh-window-status';
+        windowStatus.style.cssText = 'width:100%;font-size:10px;opacity:0.5;padding-left:68px;';
+        windowRow.appendChild(windowStatus);
+
         // ── Log section ──
         const logSection = document.createElement('div');
         logSection.id = 'ft-panel-log';
@@ -120,8 +236,10 @@ GM_addStyle(`
 
         wrap.appendChild(header);
         wrap.appendChild(refreshRow);
+        wrap.appendChild(windowRow);
         wrap.appendChild(logSection);
         document.body.appendChild(wrap);
+        updateRefreshWindowStatus();
 
         // ── Draggable ──
         let isDragging = false, dragOffX = 0, dragOffY = 0;
