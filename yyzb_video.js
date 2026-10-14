@@ -4,8 +4,8 @@
 // @version      1.1
 // @description  Hide chat box, make video use full window, keep DPlayer controls
 // @author       You
-// @match        *://*.yyzb*.live/room/*
-// @match        *://*.7zb*.com/room/*
+// @include      *://7zb*.com/room/*
+// @include      *://yyzb*.live/room/*
 // @grant        none
 // @run-at       document-idle
 // ==/UserScript==
