@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Migu Live Delay Lock
 // @namespace    migu-live-delay
-// @version      5.4
+// @version      5.5
 // @description  咪咕直播固定 Delay，阻止播放器自動追返 LIVE
 // @match        https://www.miguvideo.com/p/live/*
 // @grant        none
@@ -14,6 +14,7 @@
     const DEFAULT_DELAY = 10.0;
     const KEY_DELAY = 'migu_delay_lock_seconds_v5';
     const KEY_ENABLED = 'migu_delay_lock_enabled_v5';
+    const KEY_MINIMIZED = 'migu_delay_lock_minimized_v5';
 
     let delaySeconds = parseFloat(
         localStorage.getItem(KEY_DELAY) ?? DEFAULT_DELAY
@@ -347,6 +348,7 @@
         box.id = 'migu-delay-lock-ui';
 
         box.innerHTML = `
+            <button id="mdl-restore" type="button" title="Expand Delay controller" aria-label="Expand Delay controller">⏱ Delay +</button>
             <div class="mdl-main-row">
                 <span class="mdl-label">Delay</span>
 
@@ -361,6 +363,7 @@
                 <span class="mdl-sec">s</span>
 
                 <button id="mdl-toggle" type="button"></button>
+                <button id="mdl-minimize" type="button" title="Minimize" aria-label="Minimize Delay controller">−</button>
             </div>
 
             <div class="mdl-adjust-row">
@@ -395,6 +398,17 @@
 
         const input = document.getElementById('mdl-delay');
         const toggleButton = document.getElementById('mdl-toggle');
+        const minimizeButton = document.getElementById('mdl-minimize');
+        const restoreButton = document.getElementById('mdl-restore');
+
+        function setMinimized(minimized) {
+            box.classList.toggle('mdl-minimized', minimized);
+            localStorage.setItem(KEY_MINIMIZED, String(minimized));
+        }
+
+        minimizeButton.addEventListener('click', () => setMinimized(true));
+        restoreButton.addEventListener('click', () => setMinimized(false));
+        setMinimized(localStorage.getItem(KEY_MINIMIZED) === 'true');
 
         delaySeconds = round1(delaySeconds);
         input.value = delaySeconds.toFixed(1);
@@ -511,6 +525,50 @@
 
                 user-select: none;
                 cursor: move;
+            }
+
+            #migu-delay-lock-ui.mdl-minimized {
+                padding: 6px 10px;
+                gap: 0;
+                border-radius: 10px;
+            }
+
+            #migu-delay-lock-ui.mdl-minimized .mdl-main-row,
+            #migu-delay-lock-ui.mdl-minimized .mdl-adjust-row {
+                display: none;
+            }
+
+            #mdl-restore {
+                display: none;
+                border: 0;
+                background: transparent;
+                color: #fff;
+                font-size: 20px;
+                font-weight: 600;
+                padding: 3px 5px;
+                cursor: pointer;
+            }
+
+            #migu-delay-lock-ui.mdl-minimized #mdl-restore {
+                display: block;
+            }
+
+            #mdl-minimize {
+                margin-left: auto;
+                width: 36px;
+                height: 36px;
+                border: 0;
+                border-radius: 7px;
+                background: #3a3a42;
+                color: #fff;
+                font-size: 26px;
+                line-height: 32px;
+                cursor: pointer;
+            }
+
+            #mdl-minimize:hover,
+            #mdl-restore:hover {
+                background: #53535d;
             }
 
             .mdl-main-row {
